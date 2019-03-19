@@ -1,3 +1,7 @@
+# data folders
+/learning_rates/data/*
+/data/spongebob_characters/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
