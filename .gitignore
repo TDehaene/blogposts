@@ -1,6 +1,7 @@
 # data folders
 /learning_rates/data/*
 /data/spongebob_characters/*
+/learning_rates/gitignore/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
