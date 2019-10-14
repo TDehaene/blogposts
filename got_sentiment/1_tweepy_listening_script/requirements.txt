@@ -1,0 +1,2 @@
+tweepy
+google-cloud-pubsub
