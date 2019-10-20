@@ -22,7 +22,7 @@ from apache_beam.transforms.util import BatchElements
 
 from googleapiclient import discovery
 
-PIPELINE_MODE = 'DirectPipelineRunner'
+PIPELINE_MODE = 'DataflowRunner'
 DISCOVERY_SERVICE = 'https://storage.googleapis.com/cloud-ml/discovery' \
                     '/ml_v1_discovery.json'
 PROJECT_ID = ''
