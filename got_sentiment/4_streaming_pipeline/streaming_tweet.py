@@ -1,4 +1,5 @@
-"""A streaming python pipeline to read in pubsub tweets and perform classification"""
+"""A streaming python pipeline to read in pubsub tweets and perform
+classification"""
 
 from __future__ import absolute_import
 
@@ -12,24 +13,32 @@ import numpy as np
 import apache_beam as beam
 import apache_beam.transforms.window as window
 from apache_beam.io.gcp.bigquery import parse_table_schema_from_json
-from apache_beam.options.pipeline_options import StandardOptions, GoogleCloudOptions, SetupOptions, PipelineOptions
+from apache_beam.options.pipeline_options import StandardOptions
+from apache_beam.options.pipeline_options import GoogleCloudOptions
+from apache_beam.options.pipeline_options import SetupOptions
+from apache_beam.options.pipeline_options import PipelineOptions
+
 from apache_beam.transforms.util import BatchElements
 
 from googleapiclient import discovery
 
+PIPELINE_MODE = 'DirectPipelineRunner'
+DISCOVERY_SERVICE = 'https://storage.googleapis.com/cloud-ml/discovery' \
+                    '/ml_v1_discovery.json'
+PROJECT_ID = ''
+STAGING_LOCATION = '' # Example: gs://<your bucket>/staging
+TEMP_LOCATION = ''    # Example: gs://<your bucket>/temp
+REGION = 'us-central1'
+DATASET = ''
+TABLE_TWEETS = ''
+TABLE_TWEETS_SENTIMENT = ''
 
-# Instantiate the ML engine api client object as none
-cmle_api = None
 
-
-def init_api():
-    global cmle_api
-
+def get_service():
     # If it hasn't been instantiated yet: do it now
-    if cmle_api is None:
-        cmle_api = discovery.build('ml', 'v1',
-                                   discoveryServiceUrl='https://storage.googleapis.com/cloud-ml/discovery/ml_v1_discovery.json',
-                                   cache_discovery=True)
+    return discovery.build('ml', 'v1',
+                           discoveryServiceUrl=DISCOVERY_SERVICE,
+                           cache_discovery=True)
 
 
 def aggregate_format(key_values):
@@ -38,8 +47,10 @@ def aggregate_format(key_values):
 
     mean_sentiment = np.mean([x['sentiment'] for x in values])
     mean_timestamp = datetime.datetime.utcfromtimestamp(np.mean([
-        (datetime.datetime.strptime(x["posted_at"], '%Y-%m-%d %H:%M:%S') - datetime.datetime.fromtimestamp(
-            0)).total_seconds() for x in values
+        (datetime.datetime.strptime(x["posted_at"],
+                                    '%Y-%m-%d %H:%M:%S') -
+         datetime.datetime.fromtimestamp(
+             0)).total_seconds() for x in values
     ]))
 
     logging.info("mean sentiment")
@@ -49,7 +60,8 @@ def aggregate_format(key_values):
     logging.info(mean_timestamp)
 
     # Return in correct format, according to BQ schema
-    return {"posted_at": mean_timestamp.strftime('%Y-%m-%d %H:%M:%S'), "sentiment": mean_sentiment}
+    return {"posted_at": mean_timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "sentiment": mean_sentiment}
 
 
 def estimate_cmle(instances):
@@ -62,24 +74,21 @@ def estimate_cmle(instances):
     """
 
     # Init the CMLE calling api
-    init_api()
-
     request_data = {'instances': instances}
-
-    logging.info("making request to the ML api")
+    logging.info("Making request to the ML API")
 
     # Call the model
-    model_url = 'projects/YOUR_PROJECT/models/tweet_sentiment_classifier'
-    response = cmle_api.projects().predict(body=request_data, name=model_url).execute()
+    model_url = 'projects/dpe-cloud-mle/models/mlpipeline'
+    service = get_service()
+    response = service.projects().predict(body=request_data,
+                                          name=model_url).execute()
 
     # Read out the scores
     values = [item["score"] for item in response['predictions']]
-
     return values
 
 
 def estimate(messages):
-
     # Be able to cope with a single string as well
     if not isinstance(messages, list):
         messages = [messages]
@@ -94,7 +103,7 @@ def estimate(messages):
     for i, instance in enumerate(instances):
         instance['sentiment'] = scores[i]
 
-    logging.info("first message in batch")
+    logging.info("First message in batch")
     logging.info(instances[0])
 
     return instances
@@ -106,7 +115,7 @@ def run(argv=None):
     # Make explicit BQ schema for output tables
     bigqueryschema_json = '{"fields": [' \
                           '{"name":"id","type":"STRING"},' \
-                          '{"name":"text","type":"NUMERIC"},' \
+                          '{"name":"text","type":"STRING"},' \
                           '{"name":"user_id","type":"STRING"},' \
                           '{"name":"sentiment","type":"FLOAT"},' \
                           '{"name":"posted_at","type":"TIMESTAMP"}' \
@@ -143,14 +152,14 @@ def run(argv=None):
     pipeline_options = PipelineOptions(pipeline_args)
     pipeline_options.view_as(SetupOptions).save_main_session = True
     pipeline_options.view_as(StandardOptions).streaming = True
-    # Run on Cloud Dataflow by default
-    pipeline_options.view_as(StandardOptions).runner = 'DataflowRunner'
 
+    # Run on Cloud Dataflow by default
+    pipeline_options.view_as(StandardOptions).runner = PIPELINE_MODE
     google_cloud_options = pipeline_options.view_as(GoogleCloudOptions)
-    google_cloud_options.project = 'YOUR_RPOJECT'
-    google_cloud_options.staging_location = 'gs://YOUR_BEAM_STAGING_BUCKET/staging'
-    google_cloud_options.temp_location = 'gs://YOUR_BEAM_STAGING_BUCKET/temp'
-    google_cloud_options.region = 'europe-west1'
+    google_cloud_options.project = PROJECT_ID
+    google_cloud_options.staging_location = STAGING_LOCATION
+    google_cloud_options.temp_location = TEMP_LOCATION
+    google_cloud_options.region = REGION
 
     p = beam.Pipeline(options=pipeline_options)
 
@@ -169,19 +178,22 @@ def run(argv=None):
 
     # Window them, and batch them into batches of 50 (not too large)
     output_tweets = (lines
-                     | 'assign window key' >> beam.WindowInto(window.FixedWindows(10))
-                     | 'batch into n batches' >> BatchElements(min_batch_size=49, max_batch_size=50)
-                     | 'predict sentiment' >> beam.FlatMap(lambda messages: estimate(messages))
+                     | 'Assign window key' >> beam.WindowInto(
+            window.FixedWindows(10))
+                     | 'Batch into n batches' >> BatchElements(
+            min_batch_size=49, max_batch_size=50)
+                     | 'Predict sentiment' >> beam.FlatMap(
+            lambda messages: estimate(messages))
                      )
 
     # Write to Bigquery
     output_tweets | 'store twitter posts' >> beam.io.WriteToBigQuery(
-        table="YOUR_TABLE",
-        dataset="YOUR_DATASET",
+        table=TABLE_TWEETS,
+        dataset=DATASET,
         schema=bigqueryschema,
         write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
         create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-        project="YOUR_PROJECT"
+        project=PROJECT_ID
     )
 
     # Average out and log the mean value
@@ -190,12 +202,12 @@ def run(argv=None):
      | 'group by key' >> beam.GroupByKey()
      | 'aggregate and format' >> beam.Map(aggregate_format)
      | 'store aggregated sentiment' >> beam.io.WriteToBigQuery(
-                table="YOUR_TABLE",
-                dataset="YOUR_DATASET",
-                schema=bigqueryschema_mean,
-                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
-                create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-                project="YOUR_PROJECT"))
+            table=TABLE_TWEETS_SENTIMENT,
+            dataset=DATASET,
+            schema=bigqueryschema_mean,
+            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+            project=PROJECT_ID))
 
     result = p.run()
     result.wait_until_finish()
