@@ -1,6 +1,6 @@
 matplotlib==2.1.2
 pandas==0.23.0
-Pillow==4.2.1
+Pillow==9.0.0
 plotly==3.5.0
 scikit-image==0.13.1
 scipy==1.1.0
